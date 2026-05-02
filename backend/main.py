@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,7 +22,7 @@ app = FastAPI(title="Forge Studio", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[os.environ.get("FORGE_CORS_ORIGIN", "http://localhost:5173")],
     allow_methods=["*"],
     allow_headers=["*"],
 )

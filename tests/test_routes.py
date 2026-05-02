@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from unittest.mock import patch
@@ -244,13 +245,21 @@ def test_ingest_calls_engine_and_returns_length(client: TestClient) -> None:
 
 
 def test_ingest_local_calls_engine(client: TestClient) -> None:
-    path = "/tmp/repo"
-    resp = client.post("/api/ingest-local", json={"path": path})
+    with tempfile.TemporaryDirectory() as tmpdir:
+        resp = client.post("/api/ingest-local", json={"path": tmpdir})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["tokens"] == len(f"[context for {tmpdir}]")
+        assert _fake_engine.ingest_calls == [tmpdir]
+
+
+def test_ingest_local_rejects_nonexistent_path(client: TestClient) -> None:
+    resp = client.post("/api/ingest-local", json={"path": "/no/such/path/exists"})
     assert resp.status_code == 200
     data = resp.json()
-    assert data["ok"] is True
-    assert data["tokens"] == len(f"[context for {path}]")
-    assert _fake_engine.ingest_calls == [path]
+    assert data["ok"] is False
+    assert "not a directory" in data["error"].lower() or "does not exist" in data["error"].lower()
 
 
 def test_backend_change_updates_session(client: TestClient) -> None:

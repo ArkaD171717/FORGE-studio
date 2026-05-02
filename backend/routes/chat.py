@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Iterator
+from queue import Empty, SimpleQueue
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from backend.engine import get_engine
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+_SENTINEL = object()
 
 
 class ChatRequest(BaseModel):
@@ -39,15 +46,15 @@ async def chat(req: ChatRequest) -> ChatResponse:
     )
 
 
-def _stream_chat(engine, message, mode, max_tokens):
-    return list(
-        engine.chat(
-            message,
-            mode=mode,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-    )
+def _produce_chunks(iterator: Iterator, queue: SimpleQueue) -> None:
+    """Drain *iterator* into *queue*, posting _SENTINEL when done."""
+    try:
+        for chunk in iterator:
+            queue.put(chunk)
+    except Exception as exc:
+        queue.put(exc)
+    finally:
+        queue.put(_SENTINEL)
 
 
 @router.websocket("/api/chat/stream")
@@ -65,18 +72,33 @@ async def chat_stream(ws: WebSocket) -> None:
 
             engine = get_engine()
             try:
-                chunks = await asyncio.to_thread(
-                    _stream_chat,
-                    engine,
+                stream_iter = engine.chat(
                     message,
-                    mode,
-                    max_tokens,
+                    mode=mode,
+                    max_tokens=max_tokens,
+                    stream=True,
                 )
 
-                thinking_buf = []
-                content_buf = []
+                queue: SimpleQueue = SimpleQueue()
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, _produce_chunks, stream_iter, queue)
 
-                for chunk in chunks:
+                thinking_buf: list[str] = []
+                content_buf: list[str] = []
+
+                while True:
+                    try:
+                        item = queue.get_nowait()
+                    except Empty:
+                        await asyncio.sleep(0.01)
+                        continue
+
+                    if item is _SENTINEL:
+                        break
+                    if isinstance(item, Exception):
+                        raise item
+
+                    chunk = item
                     delta = chunk.choices[0].delta if chunk.choices else None
                     if delta is None:
                         continue
@@ -109,11 +131,12 @@ async def chat_stream(ws: WebSocket) -> None:
                     }
                 )
 
-            except Exception as exc:
+            except Exception:
+                logger.exception("Error during streaming chat")
                 await ws.send_json(
                     {
                         "type": "error",
-                        "content": str(exc),
+                        "content": "Internal error during chat",
                     }
                 )
 

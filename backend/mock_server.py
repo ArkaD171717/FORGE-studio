@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import random
 from pathlib import Path
 
@@ -21,7 +22,7 @@ app = FastAPI(title="Forge Studio (mock)")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[os.environ.get("FORGE_CORS_ORIGIN", "http://localhost:5173")],
     allow_methods=["*"],
     allow_headers=["*"],
 )
