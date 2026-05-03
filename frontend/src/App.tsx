@@ -51,7 +51,7 @@ export default function App() {
   );
 
   const handleSystemMessage = useCallback((msg: ChatMessage) => {
-    setSystemMessages((prev) => [...prev, msg]);
+    setSystemMessages((prev) => [...prev, msg].slice(-100));
   }, []);
 
   return (

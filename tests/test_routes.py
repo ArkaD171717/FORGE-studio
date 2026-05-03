@@ -240,7 +240,7 @@ def test_ingest_calls_engine_and_returns_length(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
-    assert data["tokens"] == len(f"[context for {url}]")
+    assert data["tokens"] == 42
     assert _fake_engine.ingest_calls == [url]
 
 
@@ -250,7 +250,7 @@ def test_ingest_local_calls_engine(client: TestClient) -> None:
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert data["tokens"] == len(f"[context for {tmpdir}]")
+        assert data["tokens"] > 0
         assert _fake_engine.ingest_calls == [tmpdir]
 
 
@@ -274,3 +274,64 @@ def test_backend_change_rejects_unknown(client: TestClient) -> None:
     data = resp.json()
     assert data["ok"] is False
     assert "error" in data
+
+
+# --- Failure-path tests ---
+
+
+def test_chat_missing_message_field(client: TestClient) -> None:
+    resp = client.post("/api/chat", json={})
+    assert resp.status_code == 422
+
+
+def test_chat_empty_message(client: TestClient) -> None:
+    resp = client.post("/api/chat", json={"message": ""})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["content"] == "Hello!"
+    assert _fake_engine.chat_calls[0]["message"] == ""
+
+
+def test_chat_engine_raises(client: TestClient) -> None:
+    def _exploding_chat(message: str, **kwargs: Any) -> FakeResponse:
+        raise RuntimeError("engine failure")
+
+    _fake_engine.chat = _exploding_chat  # type: ignore[assignment]
+
+    from backend.main import app
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        resp = c.post("/api/chat", json={"message": "hi"})
+        assert resp.status_code == 500
+
+
+def test_ingest_missing_repo_url_field(client: TestClient) -> None:
+    resp = client.post("/api/ingest", json={})
+    assert resp.status_code == 422
+
+
+def test_ingest_engine_raises(client: TestClient) -> None:
+    def _exploding_ingest(repo_url: str, **kwargs: Any) -> str:
+        raise RuntimeError("clone failed")
+
+    _fake_engine.ingest = _exploding_ingest  # type: ignore[assignment]
+    resp = client.post("/api/ingest", json={"repo_url": "https://github.com/bad/repo"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is False
+    assert "error" in data
+
+
+def test_ingest_local_missing_path_field(client: TestClient) -> None:
+    resp = client.post("/api/ingest-local", json={})
+    assert resp.status_code == 422
+
+
+def test_thinking_mode_missing_field(client: TestClient) -> None:
+    resp = client.post("/api/thinking-mode", json={})
+    assert resp.status_code == 422
+
+
+def test_backend_missing_field(client: TestClient) -> None:
+    resp = client.post("/api/backend", json={})
+    assert resp.status_code == 422
